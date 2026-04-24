@@ -9,17 +9,17 @@ TOKEN = os.getenv("BOT_TOKEN")
 DATA_FOLDER = "data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
------------------- ESCAPE ------------------
+#------------------ ESCAPE ------------------
 
 def escape(text):
 return re.sub(r'([_*()~`>#+-=|{}.!])', r'\\1', str(text))
 
------------------- FILE PATH ------------------
+#------------------ FILE PATH ------------------
 
 def get_group_file(chat_id):
 return os.path.join(DATA_FOLDER, f"{chat_id}.json")
 
------------------- PARSE JSON ------------------
+#------------------ PARSE JSON ------------------
 
 def parse_file(path):
 with open(path, "r", encoding="utf-8") as f:
@@ -36,7 +36,7 @@ for k, v in data.items():
 
 return result
 
------------------- COMPARE ------------------
+#------------------ COMPARE ------------------
 
 def compare(old, new):
 added = []
@@ -55,7 +55,7 @@ for k in old:
 
 return added, removed, updated
 
------------------- FORMAT ------------------
+#------------------ FORMAT ------------------
 
 def format_flags(title, data):
 if not data:
@@ -76,7 +76,7 @@ for item in data:
         text += f"`{escape(item['id'])}` - `{escape(item['old'])}` ➜ `{escape(item['name'])}`\n"
 return text + "\n"
 
------------------- HANDLER ------------------
+#------------------ HANDLER ------------------
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if not update.message.document:
@@ -122,7 +122,7 @@ try:
 except Exception as e:
     await update.message.reply_text(f"❌ Error: {e}")
 
------------------- MAIN ------------------
+#------------------ MAIN ------------------
 
 app = ApplicationBuilder().token(TOKEN).build()
 
