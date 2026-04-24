@@ -5,13 +5,13 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-
-# ✅ Escape safe (optional)
-def escape(text):
-    return re.sub(r'([_\*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
+# 🔥 temporary storage (user wise)
+user_data_store = {}
 
 
-# ✅ Flag parser
+# =========================
+# FLAG PARSER
+# =========================
 def parse_flags(text):
     lines = text.splitlines()
 
@@ -46,47 +46,35 @@ def parse_flags(text):
     return added, removed, updated
 
 
-# ✅ Common formatter
-def format_output(added, removed, updated):
-    result = ""
+# =========================
+# FORMATTER
+# =========================
+def format_output(version, added, removed, updated):
+    result = f"Version {version}\n"
 
     if added:
-        result += "🆕 Added:\n"
+        result += " ✅ Added:\n"
         for fid, name in added:
-            result += f"`{fid}` - `{name.strip()}`\n"
+            result += f"• {name.strip()} ({fid})\n"
 
     if removed:
-        result += "\n❌ Removed:\n"
+        result += "\n ❌ Removed:\n"
         for fid, name in removed:
-            result += f"`{fid}` - `{name.strip()}`\n"
+            result += f"• {name.strip()} ({fid})\n"
 
     if updated:
-        result += "\n🔄 Updated:\n"
+        result += "\n ✏️ Updated:\n"
         for fid, name in updated:
-            # split arrow ➜
             if "➜" in name:
                 name = name.split("➜")[-1].strip()
-
-            result += f"`{fid}` - `{name}`\n"
-
-    if not result:
-        result = "❌ No flags detected"
+            result += f"• {name} ({fid})\n"
 
     return result
 
 
-# ✅ TEXT handler
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    added, removed, updated = parse_flags(text)
-    result = format_output(added, removed, updated)
-
-    for i in range(0, len(result), 4000):
-        await update.message.reply_text(result[i:i+4000])
-
-
-# ✅ FILE handler (IMPORTANT)
+# =========================
+# FILE HANDLE
+# =========================
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await update.message.document.get_file()
     content = await file.download_as_bytearray()
@@ -94,19 +82,46 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = content.decode("utf-8", errors="ignore")
 
     added, removed, updated = parse_flags(text)
-    result = format_output(added, removed, updated)
 
+    user_id = update.message.from_user.id
+
+    # store data
+    user_data_store[user_id] = (added, removed, updated)
+
+    await update.message.reply_text("📌 Send version name (example: 427.0.0.0.71)")
+
+
+# =========================
+# TEXT HANDLE (version input)
+# =========================
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text.strip()
+
+    if user_id not in user_data_store:
+        await update.message.reply_text("❌ Pehle file bhej")
+        return
+
+    added, removed, updated = user_data_store[user_id]
+
+    result = format_output(text, added, removed, updated)
+
+    # clear data
+    del user_data_store[user_id]
+
+    # send
     for i in range(0, len(result), 4000):
         await update.message.reply_text(result[i:i+4000])
 
 
-# ✅ MAIN
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # TEXT + FILE BOTH
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     print("🤖 Bot running...")
     app.run_polling()
