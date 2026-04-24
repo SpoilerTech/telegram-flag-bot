@@ -1,120 +1,133 @@
 import os
 import json
+import re
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+
+TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_FOLDER = "data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 
+------------------ ESCAPE ------------------
+
+def escape(text):
+return re.sub(r'([_*()~`>#+-=|{}.!])', r'\\1', str(text))
+
+------------------ FILE PATH ------------------
 
 def get_group_file(chat_id):
-    return os.path.join(DATA_FOLDER, f"{chat_id}.txt")
+return os.path.join(DATA_FOLDER, f"{chat_id}.json")
 
+------------------ PARSE JSON ------------------
 
 def parse_file(path):
-    data = {}
+with open(path, "r", encoding="utf-8") as f:
+content = f.read().strip()
 
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read().strip()
+data = json.loads(content)
 
-        try:
-            json_data = json.loads(content)
+result = {}
+for k, v in data.items():
+    try:
+        result[str(k)] = str(v)
+    except:
+        continue
 
-            if isinstance(json_data, list):
-                for item in json_data:
-                    clean = str(item).replace('"', '').replace('[', '').replace(']', '')
-                    parts = clean.split(":")
-                    if len(parts) >= 2:
-                        data[parts[0]] = clean
+return result
 
-            elif isinstance(json_data, dict):
-                for value in json_data.values():
-                    clean = str(value).replace('"', '').replace('[', '').replace(']', '')
-                    parts = clean.split(":")
-                    if len(parts) >= 2:
-                        data[parts[0]] = clean
+------------------ COMPARE ------------------
 
-        except:
-            for line in content.splitlines():
-                clean = line.replace('"', '').replace('[', '').replace(']', '')
-                parts = clean.split(":")
-                if len(parts) >= 2:
-                    data[parts[0]] = clean
+def compare(old, new):
+added = []
+removed = []
+updated = []
 
-    return data
+for k in new:
+    if k not in old:
+        added.append({"id": k, "name": new[k]})
+    elif old[k] != new[k]:
+        updated.append({"id": k, "old": old[k], "name": new[k]})
 
+for k in old:
+    if k not in new:
+        removed.append({"id": k, "name": old[k]})
 
-def compare(old_path, new_path):
-    old = parse_file(old_path)
-    new = parse_file(new_path)
+return added, removed, updated
 
-    added, removed, updated = [], [], []
+------------------ FORMAT ------------------
 
-    for id_, full in new.items():
-        if id_ not in old:
-            name = full.split(":")[1]
-            added.append((id_, name))
+def format_flags(title, data):
+if not data:
+return f"{title} (0)\n\n"
 
-        elif old[id_] != full:
-            old_name = old[id_].split(":")[1]
-            new_name = full.split(":")[1]
-            updated.append((id_, old_name, new_name))
+text = f"{title} ({len(data)}):\n"
+for item in data:
+    text += f"`{escape(item['id'])}` - `{escape(item['name'])}`\n"
+return text + "\n"
 
-    for id_, full in old.items():
-        if id_ not in new:
-            name = full.split(":")[1]
-            removed.append((id_, name))
+def format_updated(data):
+if not data:
+return "🔄 Updated (0)\n\n"
 
-    text = "📊 FLAG CHANGELOG\n\n"
+text = f"🔄 Updated ({len(data)}):\n"
+for item in data:
+    if item["old"] != item["name"]:
+        text += f"`{escape(item['id'])}` - `{escape(item['old'])}` ➜ `{escape(item['name'])}`\n"
+return text + "\n"
 
-    text += f"🆕 Added ({len(added)}):\n"
-    for id_, name in added[:50]:
-        text += f"{id_} - {name}\n"
-
-    text += f"\n❌ Removed ({len(removed)}):\n"
-    for id_, name in removed[:50]:
-        text += f"{id_} - {name}\n"
-
-    text += f"\n🔄 Updated ({len(updated)}):\n"
-    for id_, old_n, new_n in updated[:50]:
-        text += f"{id_} - {old_n} ➜ {new_n}\n"
-
-    if not added and not removed and not updated:
-        text += "\nNo changes found."
-
-    text += "\n\n✨ Updated by @Real_Aman"
-
-    return text
-
+------------------ HANDLER ------------------
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
+if not update.message.document:
+return
 
-    new_file_path = os.path.join(DATA_FOLDER, f"{chat_id}_new.txt")
-    last_file_path = get_group_file(chat_id)
+file = await update.message.document.get_file()
+chat_id = update.effective_chat.id
+path = get_group_file(chat_id)
 
-    file = await update.message.document.get_file()
-    await file.download_to_drive(new_file_path)
+temp_path = path + "_new"
 
-    if not os.path.exists(last_file_path):
-        os.rename(new_file_path, last_file_path)
-        await update.message.reply_text("✅ First file saved.\nNext file will generate changelog.")
-        return
+await file.download_to_drive(temp_path)
 
-    result = compare(last_file_path, new_file_path)
+# first file save
+if not os.path.exists(path):
+    os.rename(temp_path, path)
+    await update.message.reply_text("✅ First file saved.\nSend next file to compare.")
+    return
 
-    # split large message safely
+try:
+    old = parse_file(path)
+    new = parse_file(temp_path)
+
+    added, removed, updated = compare(old, new)
+
+    result = "📊 FLAG CHANGELOG\n\n"
+    result += format_flags("🆕 Added", added)
+    result += format_flags("❌ Removed", removed)
+    result += format_updated(updated)
+    result += "✨ Updated by @Real_Aman"
+
+    # split message (Telegram limit)
     for i in range(0, len(result), 4000):
-        await update.message.reply_text(result[i:i+4000])
+        await update.message.reply_text(
+            result[i:i+4000],
+            parse_mode="MarkdownV2"
+        )
 
-    os.replace(new_file_path, last_file_path)
+    # replace old file
+    os.remove(path)
+    os.rename(temp_path, path)
 
+except Exception as e:
+    await update.message.reply_text(f"❌ Error: {e}")
 
-# 🔑 ENV TOKEN (Railway use karega)
-TOKEN = os.getenv("BOT_TOKEN")
+------------------ MAIN ------------------
 
 app = ApplicationBuilder().token(TOKEN).build()
+
 app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
 
 print("🤖 Bot running on Railway...")
-app.run_polling(drop_pending_updates=True)
+
+app.run_polling()
