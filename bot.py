@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 TOKEN = os.getenv("BOT_TOKEN")
 
 
-# ✅ Markdown safe escape
+# ✅ Escape safe (optional)
 def escape(text):
     return re.sub(r'([_\*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
@@ -15,13 +15,12 @@ def escape(text):
 def parse_flags(text):
     lines = text.splitlines()
 
-    added = []
-    removed = []
-    updated = []
-
+    added, removed, updated = [], [], []
     mode = None
 
     for line in lines:
+        line = line.strip()
+
         if "Added" in line:
             mode = "added"
             continue
@@ -47,46 +46,67 @@ def parse_flags(text):
     return added, removed, updated
 
 
-# ✅ Message handler
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    added, removed, updated = parse_flags(text)
-
+# ✅ Common formatter
+def format_output(added, removed, updated):
     result = ""
 
-    # ✅ Added
     if added:
         result += "🆕 Added:\n"
         for fid, name in added:
-            result += f"`{fid}` - `{name}`\n"
+            result += f"`{fid}` - `{name.strip()}`\n"
 
-    # ❌ Removed
     if removed:
         result += "\n❌ Removed:\n"
         for fid, name in removed:
-            result += f"`{fid}` - `{name}`\n"
+            result += f"`{fid}` - `{name.strip()}`\n"
 
-    # 🔄 Updated
     if updated:
         result += "\n🔄 Updated:\n"
         for fid, name in updated:
+            # split arrow ➜
+            if "➜" in name:
+                name = name.split("➜")[-1].strip()
+
             result += f"`{fid}` - `{name}`\n"
 
-    # fallback
     if not result:
         result = "❌ No flags detected"
 
-    # send safely (NO markdown error)
+    return result
+
+
+# ✅ TEXT handler
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    added, removed, updated = parse_flags(text)
+    result = format_output(added, removed, updated)
+
     for i in range(0, len(result), 4000):
         await update.message.reply_text(result[i:i+4000])
 
 
-# ✅ Main run
+# ✅ FILE handler (IMPORTANT)
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = await update.message.document.get_file()
+    content = await file.download_as_bytearray()
+
+    text = content.decode("utf-8", errors="ignore")
+
+    added, removed, updated = parse_flags(text)
+    result = format_output(added, removed, updated)
+
+    for i in range(0, len(result), 4000):
+        await update.message.reply_text(result[i:i+4000])
+
+
+# ✅ MAIN
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    # TEXT + FILE BOTH
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
 
     print("🤖 Bot running...")
     app.run_polling()
