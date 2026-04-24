@@ -1,133 +1,92 @@
 import os
-import json
 import re
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-DATA_FOLDER = "data"
-os.makedirs(DATA_FOLDER, exist_ok=True)
 
-#------------------ ESCAPE ------------------
-
+# ✅ Markdown safe escape
 def escape(text):
-return re.sub(r'([_*()~`>#+-=|{}.!])', r'\\1', str(text))
+    return re.sub(r'([_\*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
-#------------------ FILE PATH ------------------
 
-def get_group_file(chat_id):
-return os.path.join(DATA_FOLDER, f"{chat_id}.json")
+# ✅ Flag parser
+def parse_flags(text):
+    lines = text.splitlines()
 
-#------------------ PARSE JSON ------------------
+    added = []
+    removed = []
+    updated = []
 
-def parse_file(path):
-with open(path, "r", encoding="utf-8") as f:
-content = f.read().strip()
+    mode = None
 
-data = json.loads(content)
+    for line in lines:
+        if "Added" in line:
+            mode = "added"
+            continue
+        elif "Removed" in line:
+            mode = "removed"
+            continue
+        elif "Updated" in line:
+            mode = "updated"
+            continue
 
-result = {}
-for k, v in data.items():
-    try:
-        result[str(k)] = str(v)
-    except:
-        continue
+        match = re.match(r"(\d+)\s*-\s*(.+)", line)
+        if match:
+            fid = match.group(1)
+            name = match.group(2)
 
-return result
+            if mode == "added":
+                added.append((fid, name))
+            elif mode == "removed":
+                removed.append((fid, name))
+            elif mode == "updated":
+                updated.append((fid, name))
 
-#------------------ COMPARE ------------------
+    return added, removed, updated
 
-def compare(old, new):
-added = []
-removed = []
-updated = []
 
-for k in new:
-    if k not in old:
-        added.append({"id": k, "name": new[k]})
-    elif old[k] != new[k]:
-        updated.append({"id": k, "old": old[k], "name": new[k]})
+# ✅ Message handler
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
 
-for k in old:
-    if k not in new:
-        removed.append({"id": k, "name": old[k]})
+    added, removed, updated = parse_flags(text)
 
-return added, removed, updated
+    result = ""
 
-#------------------ FORMAT ------------------
+    # ✅ Added
+    if added:
+        result += "🆕 Added:\n"
+        for fid, name in added:
+            result += f"`{fid}` - `{name}`\n"
 
-def format_flags(title, data):
-if not data:
-return f"{title} (0)\n\n"
+    # ❌ Removed
+    if removed:
+        result += "\n❌ Removed:\n"
+        for fid, name in removed:
+            result += f"`{fid}` - `{name}`\n"
 
-text = f"{title} ({len(data)}):\n"
-for item in data:
-    text += f"`{escape(item['id'])}` - `{escape(item['name'])}`\n"
-return text + "\n"
+    # 🔄 Updated
+    if updated:
+        result += "\n🔄 Updated:\n"
+        for fid, name in updated:
+            result += f"`{fid}` - `{name}`\n"
 
-def format_updated(data):
-if not data:
-return "🔄 Updated (0)\n\n"
+    # fallback
+    if not result:
+        result = "❌ No flags detected"
 
-text = f"🔄 Updated ({len(data)}):\n"
-for item in data:
-    if item["old"] != item["name"]:
-        text += f"`{escape(item['id'])}` - `{escape(item['old'])}` ➜ `{escape(item['name'])}`\n"
-return text + "\n"
-
-#------------------ HANDLER ------------------
-
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-if not update.message.document:
-return
-
-file = await update.message.document.get_file()
-chat_id = update.effective_chat.id
-path = get_group_file(chat_id)
-
-temp_path = path + "_new"
-
-await file.download_to_drive(temp_path)
-
-# first file save
-if not os.path.exists(path):
-    os.rename(temp_path, path)
-    await update.message.reply_text("✅ First file saved.\nSend next file to compare.")
-    return
-
-try:
-    old = parse_file(path)
-    new = parse_file(temp_path)
-
-    added, removed, updated = compare(old, new)
-
-    result = "📊 FLAG CHANGELOG\n\n"
-    result += format_flags("🆕 Added", added)
-    result += format_flags("❌ Removed", removed)
-    result += format_updated(updated)
-    result += "✨ Updated by @Real_Aman"
-
-    # split message (Telegram limit)
+    # send safely (NO markdown error)
     for i in range(0, len(result), 4000):
-        await update.message.reply_text(
-            result[i:i+4000],
-            parse_mode="MarkdownV2"
-        )
+        await update.message.reply_text(result[i:i+4000])
 
-    # replace old file
-    os.remove(path)
-    os.rename(temp_path, path)
 
-except Exception as e:
-    await update.message.reply_text(f"❌ Error: {e}")
+# ✅ Main run
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
 
-#------------------ MAIN ------------------
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
-
-print("🤖 Bot running on Railway...")
-
-app.run_polling()
+    print("🤖 Bot running...")
+    app.run_polling()
